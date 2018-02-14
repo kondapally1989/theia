@@ -10,13 +10,12 @@ import * as temp from 'temp';
 import * as path from 'path';
 import { expect } from 'chai';
 import { FileUri } from '@theia/core/lib/node/file-uri';
-import { Git } from '../common/git';
-import { DugiteGit } from './dugite-git';
 import { Repository } from '../common';
 import { initializeBindings } from './test/binding-helper';
 import { DugiteGitWatcherServer } from './dugite-git-watcher';
 import { bindGit, bindRepositoryWatcher } from './git-backend-module';
 import { GitWatcherServer, GitStatusChangeEvent } from '../common/git-watcher';
+import { createTestRepository } from 'dugite-extra/lib/command/test-helper';
 
 // tslint:disable:no-unused-expression
 
@@ -24,24 +23,20 @@ const track = temp.track();
 
 describe('git-watcher-slow', () => {
 
-    let git: Git | undefined;
     let repository: Repository | undefined;
     let watcher: GitWatcherServer | undefined;
 
     beforeEach(async function () {
         this.timeout(5000);
 
-        const root = track.mkdirSync('git-watcher-slow');
+        const root = await createTestRepository(track.mkdirSync('git-watcher-slow'));
         const localUri = FileUri.create(root).toString();
         const { container, bind } = initializeBindings();
         bindGit(bind);
         bindRepositoryWatcher(bind);
 
-        git = container.get(DugiteGit);
         watcher = container.get(DugiteGitWatcherServer);
         repository = { localUri };
-
-        await git!.clone('https://github.com/TypeFox/find-git-exec.git', { localUri });
     });
 
     after(function () {
@@ -63,7 +58,7 @@ describe('git-watcher-slow', () => {
                     ignoredEvents--;
                     if (ignoredEvents === 0) {
                         // Once we consumed all the events we wanted to ignore, make the FS change.
-                        await fs.createFile(path.join(FileUri.fsPath(repository!.localUri), 'A.txt'));
+                        await fs.createFile(path.join(FileUri.fsPath(repository!.localUri), 'X.txt'));
                         await sleep(6000);
                     }
                 } else {
@@ -79,11 +74,11 @@ describe('git-watcher-slow', () => {
         watchers.forEach(async watcherId => await watcher!.unwatchGitChanges(watcherId));
         expect(events.length).to.be.equal(1, JSON.stringify(events));
         expect(events[0].status.changes.length).to.be.equal(1, JSON.stringify(events));
-        expect(events[0].status.changes[0].uri.toString().endsWith('A.txt')).to.be.true;
+        expect(events[0].status.changes[0].uri.toString().endsWith('X.txt')).to.be.true;
 
         events.length = 0;
         // Revert the change we've made, and check for the notifications. Zero should be received.
-        await fs.unlink(path.join(FileUri.fsPath(repository!.localUri), 'A.txt'));
+        await fs.unlink(path.join(FileUri.fsPath(repository!.localUri), 'X.txt'));
         await sleep(6000);
         expect(events).to.be.empty;
     });
