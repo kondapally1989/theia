@@ -15,8 +15,10 @@ import { GIT_RESOURCE_SCHEME } from '../git-resource';
 import URI from "@theia/core/lib/common/uri";
 import { GitFileChange, GitFileStatus, Git } from '../../common';
 import { LabelProvider } from '@theia/core/lib/browser/label-provider';
-import { GitBaseWidget, GitFileChangeNode } from "../git-base-widget";
+import { GitBaseWidget, GitFileChangeNode, SelectDirection } from "../git-base-widget";
 import { SelectionService } from "@theia/core";
+import { DiffNavigatorProvider, DiffNavigator } from "@theia/editor/lib/browser/diff-navigator";
+import { EditorWidget, EditorManager } from "@theia/editor/lib/browser";
 
 @injectable()
 export class GitDiffWidget extends GitBaseWidget<GitFileChangeNode> implements StatefulWidget {
@@ -27,9 +29,11 @@ export class GitDiffWidget extends GitBaseWidget<GitFileChangeNode> implements S
 
     constructor(
         @inject(Git) protected readonly git: Git,
+        @inject(DiffNavigatorProvider) protected diffNavigatorProvider: DiffNavigatorProvider,
         @inject(GitRepositoryProvider) protected repositoryProvider: GitRepositoryProvider,
         @inject(LabelProvider) protected labelProvider: LabelProvider,
         @inject(OpenerService) protected openerService: OpenerService,
+        @inject(EditorManager) protected editorManager: EditorManager,
         @inject(SelectionService) protected readonly selectionService: SelectionService) {
         super(repositoryProvider, labelProvider, selectionService);
         this.id = GIT_DIFF;
@@ -160,15 +164,61 @@ export class GitDiffWidget extends GitBaseWidget<GitFileChangeNode> implements S
         return h.div({ className: `gitItem noselect${change.selected ? ' ' + SELECTED_CLASS : ''}` }, ...elements);
     }
 
+    protected handleRight(): void {
+        const selected = this.getSelected();
+        if (selected && GitFileChangeNode.is(selected)) {
+            const uri = this.getUriToOpen(selected);
+            this.editorManager.getByUri(uri).then(widget => {
+                if (widget) {
+                    const diffNavigator: DiffNavigator = this.diffNavigatorProvider(widget.editor);
+                    if (diffNavigator.canNavigate() && diffNavigator.hasNext()) {
+                        diffNavigator.next();
+                    } else {
+                        this.selectNodeByDirection(SelectDirection.NEXT);
+                        this.openSelected();
+                    }
+                } else {
+                    this.openFile(selected);
+                }
+            });
+        } else if (this.gitNodes.length > 0) {
+            this.selectNode(this.gitNodes[0]);
+            this.openSelected();
+        }
+    }
+
+    protected handleLeft(): void {
+        const selected = this.getSelected();
+        if (GitFileChangeNode.is(selected)) {
+            const uri = this.getUriToOpen(selected);
+            this.editorManager.getByUri(uri).then(widget => {
+                if (widget) {
+                    const diffNavigator: DiffNavigator = this.diffNavigatorProvider(widget.editor);
+                    if (diffNavigator.canNavigate() && diffNavigator.hasPrevious()) {
+                        diffNavigator.previous();
+                    } else {
+                        this.selectNodeByDirection(SelectDirection.PREVIOUS);
+                        this.openSelected();
+                    }
+                } else {
+                    this.openFile(selected);
+                }
+            });
+        }
+    }
+
     protected handleEnter(): void {
+        this.openSelected();
+    }
+
+    protected openSelected(): void {
         const selected = this.getSelected();
         if (selected) {
             this.openFile(selected);
         }
-        this.update();
     }
 
-    protected openFile(change: GitFileChange) {
+    protected getUriToOpen(change: GitFileChange): URI {
         const uri: URI = new URI(change.uri);
 
         let fromURI = uri;
@@ -199,8 +249,22 @@ export class GitDiffWidget extends GitBaseWidget<GitFileChangeNode> implements S
         } else {
             uriToOpen = DiffUris.encode(fromURI, toURI, uri.displayName);
         }
-        open(this.openerService, uriToOpen, { mode: 'reveal' }).catch(e => {
-            console.error(e);
-        });
+        return uriToOpen;
+    }
+
+    protected openFile(change: GitFileChange) {
+        const uriToOpen = this.getUriToOpen(change);
+        open(this.openerService, uriToOpen, { mode: 'reveal' }).
+            then(widget => {
+                if (widget instanceof EditorWidget) {
+                    const diffNavigator: DiffNavigator = this.diffNavigatorProvider(widget.editor);
+                    if (diffNavigator.canNavigate() && diffNavigator.hasNext()) {
+                        diffNavigator.next();
+                    }
+                }
+            })
+            .catch(e => {
+                console.error(e);
+            });
     }
 }
